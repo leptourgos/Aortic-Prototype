@@ -3,3 +3,4 @@ pillow
 trimesh
 numpy
 matplotlib
+scipy
