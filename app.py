@@ -44,31 +44,50 @@ if uploaded_file is not None:
             if stl_file is None:
                 st.error("Could not find an .stl file inside the zip. Please check your file.")
             else:
-                with st.spinner("2. Running Topological Math on Patient Mesh..."):
-                    # THIS IS YOUR UNWRAP.PY MATH RUNNING LIVE
+ with st.spinner("2. Running Biomechanical Phase 2 Math..."):
+                    # THIS IS THE ADVANCED ALGORITHM
                     mesh = trimesh.load(stl_file)
                     vertices = mesh.vertices
+                    
+                    # 1. Spatial Normalization
                     center = vertices.mean(axis=0)
                     centered_vertices = vertices - center
-                    x_3d, y_3d, z_3d = centered_vertices[:, 0], centered_vertices[:, 1], centered_vertices[:, 2]
-                    theta = np.arctan2(y_3d, x_3d)
-                    radius = np.mean(np.sqrt(x_3d**2 + y_3d**2))
-                    x_2d = theta * radius
-                    y_2d = z_3d
+                    x, y, z = centered_vertices[:, 0], centered_vertices[:, 1], centered_vertices[:, 2]
+                    
+                    # 2. Localized Cylindrical Coordinates (Accounting for Sinus Bulges)
+                    theta = np.arctan2(y, x)
+                    r_local = np.sqrt(x**2 + y**2)
+                    
+                    # 3. Biomechanical Arc-Length Expansion
+                    x_2d = theta * r_local
+                    y_2d = z
+                    
+                    # 4. Calculate Fabric Stretch (Stress Map)
+                    # We measure how much each point stretches compared to the base tube
+                    mean_r = np.mean(r_local)
+                    stretch_factor = np.abs(r_local - mean_r)
 
-                with st.spinner("3. Generating Surgical PDF & Mandrel..."):
-                    # Generate the PDF
+                with st.spinner("3. Generating Advanced Surgical PDF..."):
+                    # Generate the PDF with a Biomechanical Heat Map
                     fig, ax = plt.subplots(figsize=(8.5, 11))
-                    ax.scatter(x_2d, y_2d, s=0.05, color='black')
-                    scale_box = Rectangle((-radius, min(y_2d)-10), 10, 10, linewidth=1, edgecolor='r', facecolor='none')
+                    
+                    # Plot the points, coloring them based on the stretch_factor (Red = High Stretch)
+                    scatter = ax.scatter(x_2d, y_2d, c=stretch_factor, cmap='coolwarm', s=0.1)
+                    
+                    # Add Scale Check
+                    scale_box = Rectangle((np.min(x_2d), np.min(y_2d)-10), 10, 10, linewidth=1, edgecolor='r', facecolor='none')
                     ax.add_patch(scale_box)
-                    ax.text(-radius, min(y_2d)-15, "1cm SCALE CHECK", color='red', fontsize=8)
-                    ax.text(0, max(y_2d)+5, "SURGICAL STENCIL (ANONYMIZED)", fontsize=12, fontweight='bold', ha='center')
+                    ax.text(np.min(x_2d), np.min(y_2d)-15, "1cm SCALE CHECK", color='red', fontsize=8)
+                    
+                    # Clinical Annotations
+                    ax.text(0, np.max(y_2d)+20, "ADVANCED BIOMECHANICAL STENCIL (PHASE 2)", fontsize=12, fontweight='bold', ha='center')
+                    ax.text(0, np.max(y_2d)+10, "HEAT MAP: Red = High Fabric Stretch (Sinuses) | Blue = Low Stretch", fontsize=9, ha='center', color='gray')
+                    
                     ax.set_aspect('equal')
                     ax.axis('off')
                     
                     pdf_path = os.path.join(temp_dir, "surgical_stencil.pdf")
-                    plt.savefig(pdf_path, dpi=300, bbox_inches='tight')
+                    plt.savefig(pdf_path, dpi=600, bbox_inches='tight')
                     
                     # Generate the Mandrel
                     mandrel_path = os.path.join(temp_dir, "patient_mandrel.stl")
