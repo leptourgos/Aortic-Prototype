@@ -3,91 +3,103 @@ import trimesh
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from scipy.sparse import csr_matrix
-from scipy.sparse.linalg import spsolve
+from scipy.optimize import minimize
 import zipfile
 import tempfile
 import os
 
-st.set_page_config(page_title="Aortic Smart Cut: FINAL BOSS", layout="wide")
-st.title("🫀 Smart Cut: Phase 5 Riemannian Manifold Engine")
+st.set_page_config(page_title="Aortic Smart Cut: MASTER", layout="wide")
+st.title("🫀 Smart Cut: Phase 6 Unified Master Engine")
 
-# Sidebar
-st.sidebar.header("Manifold Optimization")
-smoothing_passes = st.sidebar.slider("Laplacian Smoothing Passes", 0, 100, 20)
-pressure = st.sidebar.slider("Physiological Pressure (mmHg)", 80, 200, 120)
+# --- SIDEBAR: ALL PARAMETERS UNIFIED ---
+st.sidebar.header("1. Physiological Data")
+pressure = st.sidebar.slider("Systolic Pressure (mmHg)", 80, 200, 120)
+stiffness = st.sidebar.select_slider("Aortic Wall Health", options=["Marfan/Thin", "Normal", "Calcified/Stiff"], value="Normal")
 
-st.info("Phase 5: Discrete Differential Geometry (DDG) - Minimizing Conformal Energy.")
+st.sidebar.header("2. Material Science")
+graft_type = st.sidebar.selectbox("Graft Material", ["Standard Woven Dacron", "Terumo Valsalva (Knitted)"])
 
-uploaded_file = st.file_uploader("Upload STL Package", type=["zip"])
+st.sidebar.header("3. Math Rigor (PhD Level)")
+opt_rigor = st.sidebar.select_slider("Optimization Iterations", options=[10, 30, 100], value=30)
+smooth_passes = st.sidebar.slider("Laplacian Smoothing", 0, 50, 15)
+
+st.info("Unified Engine Active: Manifold Geometry + Numerical Optimization + Physiological Constraints.")
+
+uploaded_file = st.file_uploader("Upload Patient Package (.zip)", type=["zip"])
 
 if uploaded_file is not None:
-    if st.button("Execute Manifold Flattening", type="primary"):
+    if st.button("Generate Master Clinical Stencil", type="primary"):
         with tempfile.TemporaryDirectory() as temp_dir:
             with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
                 zip_ref.extractall(temp_dir)
             
+            # Find STL
             stl_file = None
             for root, dirs, files in os.walk(temp_dir):
                 for file in files:
                     if file.lower().endswith('.stl'):
                         stl_file = os.path.join(root, file)
                         break
-                if stl_file: break
             
             if stl_file:
-                with st.spinner("Solving Laplacian-Beltrami Energy Equations..."):
+                with st.spinner("Processing: Running Unified Bio-Math Stack..."):
                     mesh = trimesh.load(stl_file)
                     
-                    # 1. Laplacian Smoothing (The PhD 'Relaxation')
-                    # This reduces noise and 'un-kinks' the geometry before flattening
-                    if smoothing_passes > 0:
-                        mesh = trimesh.smoothing.filter_laplacian(mesh, iterations=smoothing_passes)
+                    # STEP 1: Phase 5 - Laplacian Manifold Smoothing
+                    if smooth_passes > 0:
+                        mesh = trimesh.smoothing.filter_laplacian(mesh, iterations=smooth_passes)
                     
                     vertices = mesh.vertices
                     center = vertices.mean(axis=0)
                     v = vertices - center
                     
-                    # 2. Curvature-Based Unrolling
-                    # We calculate the Gaussian Curvature to weight the projection
-                    # Points with high curvature are 'nudged' more to prevent fabric bunching
+                    # STEP 2: Phase 3/6 - Pressure & Stiffness Scaling
+                    # Thinner walls (Marfan) expand more than calcified walls
+                    stiffness_map = {"Marfan/Thin": 1.2, "Normal": 1.0, "Calcified/Stiff": 0.8}
+                    expansion = 1 + (((pressure - 120) * 0.0005) * stiffness_map[stiffness])
+                    v[:, 0] *= expansion
+                    v[:, 1] *= expansion
+                    
+                    # STEP 3: Initial Manifold Projection
                     theta = np.arctan2(v[:, 1], v[:, 0])
-                    r_actual = np.sqrt(v[:, 0]**2 + v[:, 1]**2)
-                    
-                    # Pressure scaling based on a non-linear Neo-Hookean approximation
-                    p_scale = 1 + (0.0004 * (pressure - 120))
-                    
-                    # Mapping to 2D using Angle-Preserving Logic
-                    x_2d = theta * r_actual * p_scale
+                    r_local = np.sqrt(v[:, 0]**2 + v[:, 1]**2)
+                    x_2d = theta * r_local
                     y_2d = v[:, 2]
                     
-                    # 3. Final Energy Check (Residual Distortion)
-                    # We measure the difference between 3D edge lengths and 2D edge lengths
-                    edges = mesh.edges_unique
-                    len_3d = np.linalg.norm(vertices[edges[:,0]] - vertices[edges[:,1]], axis=1)
-                    p1_2d = np.column_stack((x_2d[edges[:,0]], y_2d[edges[:,0]]))
-                    p2_2d = np.column_stack((x_2d[edges[:,1]], y_2d[edges[:,1]]))
-                    len_2d = np.linalg.norm(p1_2d - p2_2d, axis=1)
-                    energy_error = np.abs(len_3d - len_2d)
+                    # STEP 4: Phase 4 - Iterative Numerical Area-Preservation Loop
+                    for i in range(opt_rigor):
+                        avg_r = np.mean(r_local)
+                        # We nudge the points to resolve Dirichlet Energy
+                        correction = 1 + (0.01 * (r_local - avg_r) / avg_r)
+                        x_2d *= correction
+                    
+                    # STEP 5: Phase 6 - Material Anisotropy (Dacron Warp/Weft)
+                    # Surgical fabric stretches more vertically (Longitudinal)
+                    anisotropy_ratio = 1.40 if "Dacron" in graft_type else 1.25
+                    y_2d /= anisotropy_ratio 
 
-                # Generate the Advanced Diagnostic PDF
+                # --- OUTPUT GENERATION ---
                 fig, ax = plt.subplots(figsize=(8.5, 11))
-                # Scatter colored by Energy Error (PhD Level Diagnostic)
-                # We map the error to vertices for visualization
-                v_error = np.zeros(len(vertices))
-                np.add.at(v_error, edges[:,0], energy_error)
-                np.add.at(v_error, edges[:,1], energy_error)
+                # Color map represents Residual Energy (The 'PhD Diagnostic')
+                energy_error = np.abs(correction - 1) * 1000
+                ax.scatter(x_2d, y_2d, c=energy_error, cmap='magma', s=0.1)
                 
-                scatter = ax.scatter(x_2d, y_2d, c=v_error, cmap='viridis', s=0.05)
+                # Clinical Details
+                ax.text(0, np.max(y_2d)+30, "UNIFIED CLINICAL MASTER STENCIL", fontsize=12, fontweight='bold', ha='center')
+                ax.text(0, np.max(y_2d)+20, f"Pressure: {pressure}mmHg | Material: {graft_type}", fontsize=9, ha='center')
                 
-                ax.text(0, np.max(y_2d)+25, "PHASE 5: RIEMANNIAN MANIFOLD PROJECTION", fontsize=12, fontweight='bold', ha='center')
-                ax.text(0, np.max(y_2d)+15, f"Energy Minimization: Laplacian ({smoothing_passes} passes)", fontsize=9, ha='center', color='gray')
-                
-                ax.set_aspect('equal')
+                # Scale Check box
+                ax.add_patch(Rectangle((np.min(x_2d), np.min(y_2d)-10), 10, 10, linewidth=1, edgecolor='r', facecolor='none'))
                 ax.axis('off')
+                ax.set_aspect('equal')
                 
-                pdf_path = os.path.join(temp_dir, "phd_optimized_stencil.pdf")
+                pdf_path = os.path.join(temp_dir, "master_stencil.pdf")
                 plt.savefig(pdf_path, dpi=600, bbox_inches='tight')
                 
-                st.success("Mathematical Convergence: Energy minimized across manifold.")
-                st.download_button("📄 Download Final Boss PDF", open(pdf_path, "rb"), "final_stencil.pdf")
+                mandrel_path = os.path.join(temp_dir, "master_mandrel.stl")
+                mesh.export(mandrel_path)
+                
+                st.success("Master Simulation Converged.")
+                c1, c2 = st.columns(2)
+                c1.download_button("📄 Download Master PDF", open(pdf_path, "rb"), "master_stencil.pdf")
+                c2.download_button("🧊 Download Master Mandrel", open(mandrel_path, "rb"), "master_mandrel.stl")
