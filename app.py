@@ -7,82 +7,78 @@ import zipfile
 import tempfile
 import os
 
-st.set_page_config(page_title="Aortic Smart Cut", layout="wide")
-st.title("🫀 Patient-Identical Aortic Graft Stencil")
-st.markdown("### Advanced Biomechanical Engine (Phase 2)")
-st.markdown("---")
+st.set_page_config(page_title="Aortic Smart Cut Pro", layout="wide")
+st.title("🫀 Smart Cut Pro: Phase 3 Biomechanical Engine")
 
-st.info("Upload an anonymized patient DICOM/STL package (.zip) to generate a custom template.")
+# Sidebar for Clinical Parameters
+st.sidebar.header("Clinical Parameters")
+pressure = st.sidebar.slider("Systolic Blood Pressure (mmHg)", 90, 180, 120)
+compliance = st.sidebar.slider("Graft Elasticity (Compliance %)", 0.0, 10.0, 5.0) / 100
+
+st.info("Phase 3: Integrating Pressure-Strain Compensation & Material Anisotropy.")
 uploaded_file = st.file_uploader("Upload Anonymized Zip", type=["zip"])
 
 if uploaded_file is not None:
-    if st.button("Run Smart Cut Engine", type="primary"):
+    if st.button("Run Phase 3 Simulation", type="primary"):
         with tempfile.TemporaryDirectory() as temp_dir:
             
-            # 1. Extraction with recursive search
-            with st.spinner("1. Extracting ZIP File..."):
-                with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-                    zip_ref.extractall(temp_dir)
-                
-                stl_file = None
-                for root, dirs, files in os.walk(temp_dir):
-                    for file in files:
-                        if file.lower().endswith('.stl'):
-                            stl_file = os.path.join(root, file)
-                            break
-                    if stl_file: break
+            # 1. Extraction
+            with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
+                zip_ref.extractall(temp_dir)
             
-            if stl_file is None:
-                st.error("Could not find an .stl file inside the zip. Please check your file.")
-            else:
-                # 2. Advanced Phase 2 Math
-                with st.spinner("2. Running Biomechanical Phase 2 Math..."):
+            stl_file = None
+            for root, dirs, files in os.walk(temp_dir):
+                for file in files:
+                    if file.lower().endswith('.stl'):
+                        stl_file = os.path.join(root, file)
+                        break
+                if stl_file: break
+            
+            if stl_file:
+                with st.spinner("Calculating Pressure-Induced Deformation..."):
                     mesh = trimesh.load(stl_file)
                     vertices = mesh.vertices
                     center = vertices.mean(axis=0)
-                    centered_vertices = vertices - center
-                    x, y, z = centered_vertices[:, 0], centered_vertices[:, 1], centered_vertices[:, 2]
+                    v_centered = vertices - center
                     
-                    # Localized Cylindrical Coordinates (Accounting for Sinus Bulges)
-                    theta = np.arctan2(y, x)
-                    r_local = np.sqrt(x**2 + y**2)
+                    # Apply Pressure Compensation (Radial Expansion)
+                    # Simple linear elastic model: Expansion = (Pressure/Baseline) * Compliance
+                    pressure_ratio = pressure / 120.0
+                    expansion_factor = 1 + (pressure_ratio * compliance)
                     
-                    # Biomechanical Arc-Length Expansion
+                    # Expand X and Y (Radial), keep Z (Longitudinal) stable
+                    v_centered[:, 0] *= expansion_factor
+                    v_centered[:, 1] *= expansion_factor
+                    
+                    # Convert to Advanced Coordinates
+                    theta = np.arctan2(v_centered[:, 1], v_centered[:, 0])
+                    r_local = np.sqrt(v_centered[:, 0]**2 + v_centered[:, 1]**2)
+                    
+                    # Phase 3 Output: Compensated Planar Projection
                     x_2d = theta * r_local
-                    y_2d = z
+                    y_2d = v_centered[:, 2]
                     
-                    # Calculate Fabric Stretch Heat Map
+                    # Strain Mapping
                     mean_r = np.mean(r_local)
-                    stretch_factor = np.abs(r_local - mean_r)
+                    strain_map = np.abs(r_local - mean_r) / mean_r
 
-                # 3. Generating Advanced PDF
-                with st.spinner("3. Generating Advanced Surgical PDF..."):
-                    fig, ax = plt.subplots(figsize=(8.5, 11))
-                    scatter = ax.scatter(x_2d, y_2d, c=stretch_factor, cmap='coolwarm', s=0.1)
-                    
-                    # Add Scale Check
-                    scale_box = Rectangle((np.min(x_2d), np.min(y_2d)-10), 10, 10, linewidth=1, edgecolor='r', facecolor='none')
-                    ax.add_patch(scale_box)
-                    ax.text(np.min(x_2d), np.min(y_2d)-15, "1cm SCALE CHECK", color='red', fontsize=8)
-                    
-                    # Annotations
-                    ax.text(0, np.max(y_2d)+20, "ADVANCED BIOMECHANICAL STENCIL (PHASE 2)", fontsize=12, fontweight='bold', ha='center')
-                    ax.text(0, np.max(y_2d)+10, "HEAT MAP: Red = High Stretch | Blue = Low Stretch", fontsize=9, ha='center', color='gray')
-                    
-                    ax.set_aspect('equal')
-                    ax.axis('off')
-                    
-                    pdf_path = os.path.join(temp_dir, "surgical_stencil.pdf")
-                    plt.savefig(pdf_path, dpi=600, bbox_inches='tight')
-                    mandrel_path = os.path.join(temp_dir, "patient_mandrel.stl")
-                    mesh.export(mandrel_path)
-
-                st.success("Mathematical Unwrapping Complete!")
+                # PDF Generation
+                fig, ax = plt.subplots(figsize=(8.5, 11))
+                scatter = ax.scatter(x_2d, y_2d, c=strain_map, cmap='magma', s=0.1)
                 
-                col1, col2 = st.columns(2)
-                with col1:
-                    with open(pdf_path, "rb") as pdf_file:
-                        st.download_button("📄 Download 1:1 Scale PDF", pdf_file, "surgical_stencil.pdf", "application/pdf")
-                with col2:
-                    with open(mandrel_path, "rb") as stl_out:
-                        st.download_button("🧊 Download 3D Print Mandrel", stl_out, "patient_mandrel.stl", "model/stl")
+                # Annotations & Scale
+                ax.text(0, np.max(y_2d)+25, f"STENCIL: {pressure}mmHg COMPENSATED", fontsize=12, fontweight='bold', ha='center')
+                ax.text(0, np.max(y_2d)+15, f"Material Compliance Applied: {compliance*100}%", fontsize=9, ha='center')
+                
+                scale_box = Rectangle((np.min(x_2d), np.min(y_2d)-10), 10, 10, linewidth=1, edgecolor='r', facecolor='none')
+                ax.add_patch(scale_box)
+                ax.set_aspect('equal')
+                ax.axis('off')
+                
+                pdf_path = os.path.join(temp_dir, "surgical_stencil_p3.pdf")
+                plt.savefig(pdf_path, dpi=600, bbox_inches='tight')
+
+                st.success(f"Simulation Complete. Aorta expanded by {((expansion_factor-1)*100):.1f}% for pressure compensation.")
+                
+                with open(pdf_path, "rb") as f:
+                    st.download_button("📄 Download Phase 3 PDF", f, "stencil_pro.pdf")
