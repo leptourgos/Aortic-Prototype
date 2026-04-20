@@ -183,8 +183,20 @@ if uploaded_file is not None:
                     stl_out = os.path.join(temp_dir, f"{case_id}_mandrel.stl")
                     mesh.export(stl_out)
 
+# ==========================================
+                    # OUTPUT 3: THE 3D MANDREL STL
+                    # ==========================================
+                    stl_out = os.path.join(temp_dir, f"{case_id}_mandrel.stl")
+                    mesh.export(stl_out)
+
+                    # --- THE WINDOWS FIX: Read into memory and close file locks ---
+                    with open(pdf_diag, "rb") as f: diag_bytes = f.read()
+                    with open(pdf_cut, "rb") as f: cut_bytes = f.read()
+                    with open(stl_out, "rb") as f: stl_bytes = f.read()
+
+                # Display the buttons using the memory bytes, not the open files
                 st.success("Triple-Output Suite Generated. Print-Scaling Security Active.")
                 c1, c2, c3 = st.columns(3)
-                c1.download_button("📊 Diagnostic PDF", open(pdf_diag, "rb"), f"{case_id}_diagnostic.pdf")
-                c2.download_button("✂️ Surgical Stencil", open(pdf_cut, "rb"), f"{case_id}_stencil.pdf")
-                c3.download_button("🧊 3D Mandrel STL", open(stl_out, "rb"), f"{case_id}_mandrel.stl")
+                c1.download_button("📊 Diagnostic PDF", data=diag_bytes, file_name=f"{case_id}_diagnostic.pdf")
+                c2.download_button("✂️ Surgical Stencil", data=cut_bytes, file_name=f"{case_id}_stencil.pdf")
+                c3.download_button("🧊 3D Mandrel STL", data=stl_bytes, file_name=f"{case_id}_mandrel.stl")
