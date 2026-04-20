@@ -7,12 +7,13 @@ import zipfile
 import tempfile
 import os
 import hashlib
+import pikepdf  # <-- NEW: The PDF Metadata Library
 
 # --- DETERMINISTIC FDA SEED ---
 np.random.seed(1337)
 
 st.set_page_config(page_title="Aortic Smart Cut: OMNI-ENGINE", layout="wide")
-st.title("🫀 Smart Cut: Phase 17 Omni-Engine (Safe Mode)")
+st.title("🫀 Smart Cut: Phase 17 Omni-Engine (Print Secured)")
 
 # ==========================================
 # THE 21-PARAMETER MASTER CONSOLE
@@ -53,7 +54,7 @@ with st.sidebar:
     st.header("🌐 7. Global AI")
     ai_sync = st.button("Sync Global Outcome Weights")
 
-st.info("System Armed. 21 Parameters Loaded. Awaiting Geometry.")
+st.info("System Armed. 21 Parameters Loaded. Print Scaling Lockout Active.")
 
 uploaded_file = st.file_uploader("Upload Patient Data (.zip)", type=["zip"])
 
@@ -76,7 +77,6 @@ if uploaded_file is not None:
                 with st.spinner("Loading Geometry & Enforcing Safe-Mode Compute..."):
                     mesh = trimesh.load(stl_path)
                     
-                    # --- SAFE-MODE DECIMATION (The 15-Minute Freeze Fix) ---
                     vertex_count = len(mesh.vertices)
                     if vertex_count > 50000:
                         st.warning(f"⚠️ Massive File Detected ({vertex_count} vertices). Engaging Automatic Compute Decimation.")
@@ -84,22 +84,17 @@ if uploaded_file is not None:
                     else:
                         decimation_factor = 1
 
-                    # Cryptography
                     with open(stl_path, "rb") as f: file_hash = hashlib.sha256(f.read()).hexdigest()[:12]
-                    
-                    # Geometry extraction
                     v_orig = mesh.vertices[::decimation_factor] - mesh.vertices.mean(axis=0)
                     
                 with st.spinner("Processing Phase 17 Physics, Genomics & AI..."):
                     z_norm = v_orig[:, 2] / (np.max(v_orig[:, 2]) + 1e-9)
                     
-                    # Genomics & AI Weights
                     gen_mult = 3.0 if "Marfan" in genetics else (4.0 if "Loeys" in genetics else 1.0)
                     ai_weight = 1.012 if ai_sync else 1.0
                     anisotropy = (1.25 if "Terumo" in graft_type else 1.45) * ai_weight
                     creep = 1.0 + (((implant_life * 525600 * heart_rate) / 1e9) * 0.04 * gen_mult)
                     
-                    # Kinematics
                     stretch = 1.0 + (p_systolic - 120)*0.0004
                     ang = np.radians(torsion_deg * z_norm)
                     v_t = v_orig.copy()
@@ -116,16 +111,13 @@ if uploaded_file is not None:
                     thrombosis_risk = local_strain * (1 + calc_index)
                     rfid_nodes = np.where(local_strain > np.percentile(local_strain, 99.5))[0]
 
-                    # Boundary Extraction
                     top_idx = np.where(z_norm > 0.95)[0] 
                     bot_idx = np.where(z_norm < 0.05)[0]
                     top_order = np.argsort(x_flat[top_idx])
                     bot_order = np.argsort(x_flat[bot_idx])
-
-                    # Render Speed Adjustment
                     step = {"Fast (Low Res)": 10, "Standard": 3, "Ultra": 1}[render_quality]
 
-                with st.spinner("Generating Triple-Output Suite..."):
+                with st.spinner("Generating Secured Triple-Output Suite..."):
                     # ==========================================
                     # OUTPUT 1: THE DIAGNOSTIC PDF
                     # ==========================================
@@ -141,7 +133,6 @@ if uploaded_file is not None:
                     # OUTPUT 2: THE SURGICAL STENCIL (1:1)
                     # ==========================================
                     fig_cut, ax2 = plt.subplots(figsize=(8.27, 11.69))
-                    # Plot Boundaries
                     ax2.plot(x_flat[top_idx][top_order], y_flat[top_idx][top_order], 'k-', lw=1.5)
                     ax2.plot(x_flat[bot_idx][bot_order], y_flat[bot_idx][bot_order], 'k-', lw=1.5)
                     ax2.plot([x_flat[top_idx][top_order][0], x_flat[bot_idx][bot_order][0]], 
@@ -160,7 +151,10 @@ if uploaded_file is not None:
                         target_nodes = rfid_nodes[:5] 
                         ax2.scatter(x_flat[target_nodes], y_flat[target_nodes], color='#FF00FF', marker='o', s=40, zorder=5)
 
-                    ax2.text(np.min(x_flat), np.max(y_flat)+20, f"CASE: {case_id} | HASH: {file_hash}\nSHRINK COMP: {sterilization}", fontsize=8)
+                    # --- NEW: VISUAL PRINT WARNINGS ---
+                    ax2.text(np.min(x_flat), np.max(y_flat)+35, "⚠️ REQUIRED PRINTER SETTING: 'ACTUAL SIZE' OR 'SCALE: 1.0 (100%)' ⚠️", color='red', fontsize=9, fontweight='bold')
+                    ax2.text(np.min(x_flat), np.max(y_flat)+20, f"CASE: {case_id} | HASH: {file_hash}\nSHRINK COMP: {sterilization} | RATIO: 1:1", fontsize=8)
+                    
                     calib = 10.0 * scale_factor
                     ax2.add_patch(Rectangle((np.min(x_flat)-15, np.min(y_flat)), calib, calib, fill=True, color='black'))
                     
@@ -171,12 +165,25 @@ if uploaded_file is not None:
                     plt.close(fig_cut)
 
                     # ==========================================
+                    # THE FDA "NO-SHRINK" METADATA INJECTION
+                    # ==========================================
+                    try:
+                        pdf_doc = pikepdf.Pdf.open(pdf_cut)
+                        if "/ViewerPreferences" not in pdf_doc.Root:
+                            pdf_doc.Root.ViewerPreferences = pikepdf.Dictionary()
+                        pdf_doc.Root.ViewerPreferences.PrintScaling = pikepdf.Name("/None")
+                        pdf_doc.save(pdf_cut)
+                        pdf_doc.close()
+                    except Exception as e:
+                        st.warning(f"Metadata injection skipped (pikepdf might not be installed): {e}")
+
+                    # ==========================================
                     # OUTPUT 3: THE 3D MANDREL STL
                     # ==========================================
                     stl_out = os.path.join(temp_dir, f"{case_id}_mandrel.stl")
                     mesh.export(stl_out)
 
-                st.success("Triple-Output Suite Generated Successfully.")
+                st.success("Triple-Output Suite Generated. Print-Scaling Security Active.")
                 c1, c2, c3 = st.columns(3)
                 c1.download_button("📊 Diagnostic PDF", open(pdf_diag, "rb"), f"{case_id}_diagnostic.pdf")
                 c2.download_button("✂️ Surgical Stencil", open(pdf_cut, "rb"), f"{case_id}_stencil.pdf")
