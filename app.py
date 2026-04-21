@@ -1,13 +1,14 @@
 import streamlit as st
 import trimesh
 import numpy as np
+import matplotlib.subplots as plt_sub
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import zipfile
 import tempfile
 import os
 import hashlib
-import pikepdf  # <-- NEW: The PDF Metadata Library
+import pikepdf  # <-- The PDF Metadata Library
 
 # --- DETERMINISTIC FDA SEED ---
 np.random.seed(1337)
@@ -165,25 +166,20 @@ if uploaded_file is not None:
                     plt.close(fig_cut)
 
                     # ==========================================
-                    # THE FDA "NO-SHRINK" METADATA INJECTION
+                    # THE FDA "NO-SHRINK" METADATA INJECTION (FIXED)
                     # ==========================================
                     try:
-                        pdf_doc = pikepdf.Pdf.open(pdf_cut)
+                        # Fixed the permission error by allowing the library to overwrite the file
+                        pdf_doc = pikepdf.Pdf.open(pdf_cut, allow_overwriting_input=True)
                         if "/ViewerPreferences" not in pdf_doc.Root:
                             pdf_doc.Root.ViewerPreferences = pikepdf.Dictionary()
                         pdf_doc.Root.ViewerPreferences.PrintScaling = pikepdf.Name("/None")
                         pdf_doc.save(pdf_cut)
                         pdf_doc.close()
                     except Exception as e:
-                        st.warning(f"Metadata injection skipped (pikepdf might not be installed): {e}")
+                        st.warning(f"Metadata injection skipped: {e}")
 
                     # ==========================================
-                    # OUTPUT 3: THE 3D MANDREL STL
-                    # ==========================================
-                    stl_out = os.path.join(temp_dir, f"{case_id}_mandrel.stl")
-                    mesh.export(stl_out)
-
-# ==========================================
                     # OUTPUT 3: THE 3D MANDREL STL
                     # ==========================================
                     stl_out = os.path.join(temp_dir, f"{case_id}_mandrel.stl")
