@@ -1,7 +1,7 @@
 import streamlit as st
 import trimesh
 import numpy as np
-import matplotlib.subplots as plt_sub
+
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import zipfile
