@@ -1,198 +1,220 @@
 import streamlit as st
 import trimesh
 import numpy as np
-
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+import plotly.graph_objects as go
 import zipfile
-import tempfile
-import os
+import io
 import hashlib
-import pikepdf  # <-- The PDF Metadata Library
+from scipy.spatial.transform import Rotation as R
 
 # --- DETERMINISTIC FDA SEED ---
 np.random.seed(1337)
 
-st.set_page_config(page_title="Aortic Smart Cut: OMNI-ENGINE", layout="wide")
-st.title("🫀 Smart Cut: Phase 17 Omni-Engine (Print Secured)")
+st.set_page_config(page_title="Omni-Engine: Surgical Stencil", layout="wide", initial_sidebar_state="expanded")
 
 # ==========================================
-# THE 21-PARAMETER MASTER CONSOLE
+# SESSION STATE MANAGEMENT (Fixes disappearing UI)
+# ==========================================
+if 'processed' not in st.session_state:
+    st.session_state.processed = False
+if 'pdf_buffer' not in st.session_state:
+    st.session_state.pdf_buffer = None
+if 'stencil_fig' not in st.session_state:
+    st.session_state.stencil_fig = None
+if 'hologram_fig' not in st.session_state:
+    st.session_state.hologram_fig = None
+
+# --- TOP NAVIGATION ---
+st.title("🫀 Omni-Engine: Aortic Smart Cut")
+st.markdown("##### Clinical-Grade Valsalva Graft Stencil Generator")
+
+# ==========================================
+# THE MASTER CONSOLE
 # ==========================================
 with st.sidebar:
-    st.header("🔒 1. Traceability & Hardware")
+    st.header("📋 Patient Logistics")
     case_id = st.text_input("Patient Case ID", "PX-990-OMEGA")
-    printer_ip = st.text_input("Printer Local IP", "192.168.1.105")
-    printer_key = st.text_input("Calibration Token", "OVERRIDE")
     
-    st.header("⚖️ 2. Engineering Quality")
-    min_mqs = st.slider("Min Mesh Quality (MQS)", 0.70, 0.95, 0.85)
-    smooth_passes = st.slider("Laplacian Passes", 0, 100, 30)
-    render_quality = st.select_slider("Render Density (Speed)", options=["Fast (Low Res)", "Standard", "Ultra"], value="Standard")
-    
-    st.header("🧬 3. Genomics & Aging")
-    genetics = st.selectbox("Genetic Profile", ["Standard", "Marfan (FBN1)", "Loeys-Dietz (TGFBR)"])
+    st.header("🧬 Graft Specifications")
     graft_type = st.selectbox("Graft Material", ["Terumo Valsalva", "Woven Dacron", "ePTFE"])
-    implant_life = st.slider("Service Life (Years)", 5, 30, 20)
-    calc_index = st.slider("Calcification (HU)", 0.0, 1.0, 0.4)
-    
-    st.header("🧫 4. Post-Op Logistics")
+    graft_diameter = st.slider("Graft Diameter (mm)", 26, 34, 30)
     sterilization = st.selectbox("Sterilization (Shrinkage)", ["Autoclave (1.4%)", "EtO Gas (0.8%)", "None"])
-    coronary_markers = st.toggle("Tyvek V-Notches", value=True)
-    enable_rfid = st.toggle("RFID Sensor Targets", value=True)
     
-    st.header("🌊 5. Hemodynamics")
-    hemo_source = st.radio("Data Ingestion", ["Patient 4D-Flow DICOM", "Navier-Stokes Sim"])
-    rheology = st.selectbox("Rheology Model", ["Carreau-Yasuda", "Newtonian"])
-    heart_rate = st.slider("Heart Rate (BPM)", 50, 120, 72)
-    p_systolic = st.slider("Systolic Press. (mmHg)", 90, 200, 120)
-    blood_vel = st.slider("Velocity (m/s)", 0.5, 3.0, 1.2)
-    torsion_deg = st.slider("Torsion (Twist°)", 0, 30, 15)
+    st.header("⚙️ Radar Calibration")
+    render_quality = st.select_slider("Radar Resolution", options=["Standard (360°)", "High (720°)", "Ultra (1440°)"], value="High (720°)")
     
-    st.header("✂️ 6. Surgical Action")
-    suture_force = st.select_slider("Suture Profile", options=["6-0", "5-0", "4-0"])
-    
-    st.header("🌐 7. Global AI")
-    ai_sync = st.button("Sync Global Outcome Weights")
+    st.markdown("---")
+    st.warning("Ensure 3D axis is completely leveled before execution.")
 
-st.info("System Armed. 21 Parameters Loaded. Print Scaling Lockout Active.")
-
-uploaded_file = st.file_uploader("Upload Patient Data (.zip)", type=["zip"])
+# --- THE MATH ENGINE ---
+def auto_align_mesh(vertices):
+    cov = np.cov(vertices.T)
+    eigenvalues, eigenvectors = np.linalg.eigh(cov)
+    primary_axis = eigenvectors[:, np.argmax(eigenvalues)]
+    if primary_axis[2] < 0: primary_axis = -primary_axis
+    target_axis = np.array([0, 0, 1])
+    rot_axis = np.cross(primary_axis, target_axis)
+    rot_axis_norm = np.linalg.norm(rot_axis)
+    if rot_axis_norm < 1e-6: return np.eye(3) 
+    rot_axis /= rot_axis_norm
+    angle = np.arccos(np.clip(np.dot(primary_axis, target_axis), -1.0, 1.0))
+    return R.from_rotvec(rot_axis * angle).as_matrix()
 
 # ==========================================
-# THE EXECUTION ENGINE
+# MAIN DASHBOARD
 # ==========================================
+uploaded_file = st.file_uploader("Upload Patient Geometry (.zip containing .stl)", type=["zip"])
+
 if uploaded_file is not None:
-    if st.button("EXECUTE OMNI-ENGINE", type="primary"):
-        # 1. API Handshake
-        if printer_key != "OVERRIDE":
-            st.error("🛑 FDA LOCKOUT: Invalid Printer Token. Hardware not verified.")
-            st.stop()
+    # Read zip in memory (no temp folders needed)
+    with zipfile.ZipFile(uploaded_file, 'r') as z:
+        stl_filename = next((name for name in z.namelist() if name.lower().endswith('.stl')), None)
+        if stl_filename:
+            with z.open(stl_filename) as f:
+                # Load trimesh directly from file object
+                mesh = trimesh.load(f, file_type='stl')
+                mesh.vertices -= np.mean(mesh.vertices, axis=0)
+                auto_matrix = auto_align_mesh(mesh.vertices)
+                mesh.vertices = np.dot(mesh.vertices, auto_matrix.T)
+
+    # --- TOP ROW: GYROSCOPE ---
+    st.markdown("### 1. Biological Axis Calibration")
+    col1, col2, col3, col4 = st.columns([1,1,1,2])
+    with col1: pitch = st.number_input("Pitch (X-Axis)", -45, 45, 0)
+    with col2: roll = st.number_input("Roll (Y-Axis)", -45, 45, 0)
+    with col3: yaw = st.number_input("Yaw (Z-Axis)", -180, 180, 0)
+    
+    rot_matrix = R.from_euler('xyz', [pitch, roll, yaw], degrees=True).as_matrix()
+    
+    # Generate Hologram Preview
+    v = mesh.vertices
+    step_size = max(1, len(v) // 15000)
+    v_preview = v[::step_size]
+    v_preview = np.dot(v_preview, rot_matrix.T)
+    
+    fig_3d = go.Figure(data=[go.Scatter3d(
+        x=v_preview[:, 0], y=v_preview[:, 1], z=v_preview[:, 2],
+        mode='markers', marker=dict(size=1.5, color='#00d4ff', opacity=0.7)
+    )])
+    fig_3d.update_layout(
+        scene_camera=dict(eye=dict(x=0, y=2.0, z=0)),
+        scene=dict(xaxis_visible=False, yaxis_visible=False, zaxis_visible=True),
+        margin=dict(l=0, r=0, b=0, t=0), height=350,
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)"
+    )
+    st.session_state.hologram_fig = fig_3d
+
+    # --- EXECUTION BUTTON ---
+    st.markdown("### 2. Generate Surgical Stencil")
+    if st.button("▶ EXECUTE OMNI-ENGINE", type="primary", use_container_width=True):
+        with st.spinner("Isolating Valsalva Frequencies via FFT..."):
+            v_highres = np.dot(mesh.vertices, rot_matrix.T)
+            x, y, z = v_highres[:, 0], v_highres[:, 1], v_highres[:, 2]
             
-        with tempfile.TemporaryDirectory() as temp_dir:
-            with zipfile.ZipFile(uploaded_file, 'r') as zip_ref:
-                zip_ref.extractall(temp_dir)
-            stl_path = next((os.path.join(r, f) for r, d, files in os.walk(temp_dir) for f in files if f.lower().endswith('.stl')), None)
+            angles = np.arctan2(y, x)
+            angles = np.mod(angles, 2 * np.pi)
             
-            if stl_path:
-                with st.spinner("Loading Geometry & Enforcing Safe-Mode Compute..."):
-                    mesh = trimesh.load(stl_path)
+            res_map = {"Standard (360°)": 360, "High (720°)": 720, "Ultra (1440°)": 1440}
+            num_bins = res_map[render_quality]
+            
+            bins = np.linspace(0, 2 * np.pi, num_bins + 1)
+            indices = np.digitize(angles, bins)
+            
+            min_z = np.full(num_bins, np.nan)
+            for i in range(1, num_bins + 1):
+                mask = (indices == i)
+                if np.any(mask):
+                    slice_z = z[mask]
+                    q15 = np.percentile(slice_z, 15)
+                    valid_z = slice_z[slice_z <= q15]
+                    min_z[i-1] = np.mean(valid_z) if len(valid_z) > 0 else np.min(slice_z)
                     
-                    vertex_count = len(mesh.vertices)
-                    if vertex_count > 50000:
-                        st.warning(f"⚠️ Massive File Detected ({vertex_count} vertices). Engaging Automatic Compute Decimation.")
-                        decimation_factor = int(vertex_count / 25000)
-                    else:
-                        decimation_factor = 1
+            valid = ~np.isnan(min_z)
+            min_z_interp = np.interp(np.arange(num_bins), np.arange(num_bins)[valid], min_z[valid])
+            
+            # FFT BANDPASS
+            fft_coeffs = np.fft.rfft(min_z_interp)
+            fft_coeffs[1] = 0 # Kill Tilt
+            fft_coeffs[2] = 0 # Kill Oval distortion
+            fft_coeffs[4:] = 0 # Kill Noise
+            smooth_z = np.fft.irfft(fft_coeffs, n=num_bins)
+            
+            z_range = np.max(smooth_z) - np.min(smooth_z)
+            if z_range > 0:
+                smooth_z = ((smooth_z - np.min(smooth_z)) / z_range) * 15.0 
+            
+            shrink_comp = 1.014 if "Autoclave" in sterilization else (1.008 if "EtO" in sterilization else 1.0)
+            graft_circumference = (graft_diameter * np.pi) * shrink_comp
+            
+            x_flat = np.linspace(0, graft_circumference, num_bins)
+            y_flat = smooth_z * shrink_comp
+            y_flat = y_flat - np.min(y_flat) + 10.0
 
-                    with open(stl_path, "rb") as f: file_hash = hashlib.sha256(f.read()).hexdigest()[:12]
-                    v_orig = mesh.vertices[::decimation_factor] - mesh.vertices.mean(axis=0)
-                    
-                with st.spinner("Processing Phase 17 Physics, Genomics & AI..."):
-                    z_norm = v_orig[:, 2] / (np.max(v_orig[:, 2]) + 1e-9)
-                    
-                    gen_mult = 3.0 if "Marfan" in genetics else (4.0 if "Loeys" in genetics else 1.0)
-                    ai_weight = 1.012 if ai_sync else 1.0
-                    anisotropy = (1.25 if "Terumo" in graft_type else 1.45) * ai_weight
-                    creep = 1.0 + (((implant_life * 525600 * heart_rate) / 1e9) * 0.04 * gen_mult)
-                    
-                    stretch = 1.0 + (p_systolic - 120)*0.0004
-                    ang = np.radians(torsion_deg * z_norm)
-                    v_t = v_orig.copy()
-                    v_t[:,0] = (v_orig[:,0]*np.cos(ang) - v_orig[:,1]*np.sin(ang)) * stretch
-                    v_t[:,1] = (v_orig[:,0]*np.sin(ang) + v_orig[:,1]*np.cos(ang)) * stretch
+            # GENERATE PLOT
+            fig, ax = plt.subplots(figsize=(8.27, 4)) # Live preview aspect ratio
+            ax.plot(x_flat, y_flat, 'k-', lw=3.0)
+            ax.plot([0, graft_circumference], [70, 70], 'k-', lw=1)
+            ax.plot([0, 0], [y_flat[0], 70], 'k-', lw=1)
+            ax.plot([graft_circumference, graft_circumference], [y_flat[-1], 70], 'k-', lw=1)
+            ax.fill_between(x_flat, y_flat, 70, color='lightgray', alpha=0.3)
+            
+            mid_x = graft_circumference / 2.0
+            ax.plot([mid_x, mid_x], [70, 75], 'b-', lw=2)
+            ax.text(mid_x, 76, "LCA/RCA MARKER ALIGNMENT", color='blue', fontsize=7, ha='center')
+            
+            ax.add_patch(Rectangle((0, y_flat.min() - 8), 10, 10, fill=True, color='black'))
+            ax.text(12, y_flat.min() - 6, "10mm CALIBRATION", fontsize=8, va='center')
+            
+            ax.set_aspect('equal')
+            ax.axis('off')
+            
+            st.session_state.stencil_fig = fig
+            
+            # GENERATE PDF IN MEMORY (A4 Size)
+            fig_pdf, ax_pdf = plt.subplots(figsize=(8.27, 11.69))
+            ax_pdf.plot(x_flat, y_flat, 'k-', lw=3.0)
+            ax_pdf.plot([0, graft_circumference], [70, 70], 'k-', lw=1)
+            ax_pdf.plot([0, 0], [y_flat[0], 70], 'k-', lw=1)
+            ax_pdf.plot([graft_circumference, graft_circumference], [y_flat[-1], 70], 'k-', lw=1)
+            ax_pdf.fill_between(x_flat, y_flat, 70, color='lightgray', alpha=0.3)
+            ax_pdf.plot([mid_x, mid_x], [70, 75], 'b-', lw=2)
+            ax_pdf.text(mid_x, 76, "LCA/RCA MARKER ALIGNMENT", color='blue', fontsize=7, ha='center')
+            ax_pdf.text(0, 85, "⚠️ REQUIRED PRINTER SETTING: 'ACTUAL SIZE' OR 'SCALE: 1.0 (100%)' ⚠️", color='red', fontsize=10, fontweight='bold')
+            ax_pdf.text(0, 80, f"CASE: {case_id}\nGRAFT: {graft_diameter}mm {graft_type} | CIRC: {graft_circumference:.1f}mm", fontsize=9)
+            ax_pdf.add_patch(Rectangle((0, y_flat.min() - 8), 10, 10, fill=True, color='black'))
+            ax_pdf.text(12, y_flat.min() - 6, "10mm CALIBRATION", fontsize=8, va='center')
+            ax_pdf.set_aspect('equal')
+            ax_pdf.axis('off')
+            
+            pdf_buffer = io.BytesIO()
+            fig_pdf.savefig(pdf_buffer, format='pdf', dpi=300, bbox_inches='tight')
+            pdf_buffer.seek(0)
+            
+            st.session_state.pdf_buffer = pdf_buffer
+            st.session_state.processed = True
 
-                    r = np.sqrt(v_t[:,0]**2 + v_t[:,1]**2)
-                    scale_factor = 1.014 if "Autoclave" in sterilization else (1.008 if "EtO" in sterilization else 1.0)
-                    
-                    x_flat = (np.arctan2(v_t[:,1], v_t[:,0]) * r) * scale_factor
-                    y_flat = ((v_t[:, 2] * creep) / anisotropy) * scale_factor
-
-                    local_strain = np.abs(np.gradient(r))
-                    thrombosis_risk = local_strain * (1 + calc_index)
-                    rfid_nodes = np.where(local_strain > np.percentile(local_strain, 99.5))[0]
-
-                    top_idx = np.where(z_norm > 0.95)[0] 
-                    bot_idx = np.where(z_norm < 0.05)[0]
-                    top_order = np.argsort(x_flat[top_idx])
-                    bot_order = np.argsort(x_flat[bot_idx])
-                    step = {"Fast (Low Res)": 10, "Standard": 3, "Ultra": 1}[render_quality]
-
-                with st.spinner("Generating Secured Triple-Output Suite..."):
-                    # ==========================================
-                    # OUTPUT 1: THE DIAGNOSTIC PDF
-                    # ==========================================
-                    fig_diag, ax1 = plt.subplots(figsize=(8.5, 11))
-                    ax1.scatter(x_flat[::step], y_flat[::step], c=thrombosis_risk[::step], cmap='inferno', s=2)
-                    ax1.set_title(f"DIAGNOSTIC REPORT | Case: {case_id} | Genetics: {genetics}")
-                    ax1.axis('off')
-                    pdf_diag = os.path.join(temp_dir, f"{case_id}_diagnostic.pdf")
-                    plt.savefig(pdf_diag, dpi=150)
-                    plt.close(fig_diag) 
-
-                    # ==========================================
-                    # OUTPUT 2: THE SURGICAL STENCIL (1:1)
-                    # ==========================================
-                    fig_cut, ax2 = plt.subplots(figsize=(8.27, 11.69))
-                    ax2.plot(x_flat[top_idx][top_order], y_flat[top_idx][top_order], 'k-', lw=1.5)
-                    ax2.plot(x_flat[bot_idx][bot_order], y_flat[bot_idx][bot_order], 'k-', lw=1.5)
-                    ax2.plot([x_flat[top_idx][top_order][0], x_flat[bot_idx][bot_order][0]], 
-                             [y_flat[top_idx][top_order][0], y_flat[bot_idx][bot_order][0]], 'k-', lw=1.5)
-                    ax2.plot([x_flat[top_idx][top_order][-1], x_flat[bot_idx][bot_order][-1]], 
-                             [y_flat[top_idx][top_order][-1], y_flat[bot_idx][bot_order][-1]], 'k-', lw=1.5)
-
-                    if coronary_markers:
-                        mid_x, max_y = np.mean(x_flat), np.max(y_flat)
-                        ax2.plot([mid_x-20, mid_x-20], [max_y, max_y+10], 'b-', lw=2)
-                        ax2.text(mid_x-25, max_y+12, "LCA NOTCH", color='blue', fontsize=7)
-                        ax2.plot([mid_x+20, mid_x+20], [max_y, max_y+10], 'b-', lw=2)
-                        ax2.text(mid_x+15, max_y+12, "RCA NOTCH", color='blue', fontsize=7)
-
-                    if enable_rfid and len(rfid_nodes) > 0:
-                        target_nodes = rfid_nodes[:5] 
-                        ax2.scatter(x_flat[target_nodes], y_flat[target_nodes], color='#FF00FF', marker='o', s=40, zorder=5)
-
-                    # --- NEW: VISUAL PRINT WARNINGS ---
-                    ax2.text(np.min(x_flat), np.max(y_flat)+35, "⚠️ REQUIRED PRINTER SETTING: 'ACTUAL SIZE' OR 'SCALE: 1.0 (100%)' ⚠️", color='red', fontsize=9, fontweight='bold')
-                    ax2.text(np.min(x_flat), np.max(y_flat)+20, f"CASE: {case_id} | HASH: {file_hash}\nSHRINK COMP: {sterilization} | RATIO: 1:1", fontsize=8)
-                    
-                    calib = 10.0 * scale_factor
-                    ax2.add_patch(Rectangle((np.min(x_flat)-15, np.min(y_flat)), calib, calib, fill=True, color='black'))
-                    
-                    ax2.set_aspect('equal')
-                    ax2.axis('off')
-                    pdf_cut = os.path.join(temp_dir, f"{case_id}_stencil_1to1.pdf")
-                    plt.savefig(pdf_cut, dpi=150)
-                    plt.close(fig_cut)
-
-                    # ==========================================
-                    # THE FDA "NO-SHRINK" METADATA INJECTION (FIXED)
-                    # ==========================================
-                    try:
-                        # Fixed the permission error by allowing the library to overwrite the file
-                        pdf_doc = pikepdf.Pdf.open(pdf_cut, allow_overwriting_input=True)
-                        if "/ViewerPreferences" not in pdf_doc.Root:
-                            pdf_doc.Root.ViewerPreferences = pikepdf.Dictionary()
-                        pdf_doc.Root.ViewerPreferences.PrintScaling = pikepdf.Name("/None")
-                        pdf_doc.save(pdf_cut)
-                        pdf_doc.close()
-                    except Exception as e:
-                        st.warning(f"Metadata injection skipped: {e}")
-
-                    # ==========================================
-                    # OUTPUT 3: THE 3D MANDREL STL
-                    # ==========================================
-                    stl_out = os.path.join(temp_dir, f"{case_id}_mandrel.stl")
-                    mesh.export(stl_out)
-
-                    # --- THE WINDOWS FIX: Read into memory and close file locks ---
-                    with open(pdf_diag, "rb") as f: diag_bytes = f.read()
-                    with open(pdf_cut, "rb") as f: cut_bytes = f.read()
-                    with open(stl_out, "rb") as f: stl_bytes = f.read()
-
-                # Display the buttons using the memory bytes, not the open files
-                st.success("Triple-Output Suite Generated. Print-Scaling Security Active.")
-                c1, c2, c3 = st.columns(3)
-                c1.download_button("📊 Diagnostic PDF", data=diag_bytes, file_name=f"{case_id}_diagnostic.pdf")
-                c2.download_button("✂️ Surgical Stencil", data=cut_bytes, file_name=f"{case_id}_stencil.pdf")
-                c3.download_button("🧊 3D Mandrel STL", data=stl_bytes, file_name=f"{case_id}_mandrel.stl")
+    # --- DUAL SCREEN DISPLAY ---
+    if st.session_state.processed:
+        st.markdown("### 3. Surgical Review")
+        
+        # Dual Column Layout
+        col_view1, col_view2 = st.columns(2)
+        
+        with col_view1:
+            st.markdown("##### 3D Volumetric Anatomy")
+            st.plotly_chart(st.session_state.hologram_fig, use_container_width=True)
+            
+        with col_view2:
+            st.markdown("##### 2D Surgical Cut-Line Preview")
+            st.pyplot(st.session_state.stencil_fig)
+            
+            st.download_button(
+                label="📥 DOWNLOAD CLINICAL PDF",
+                data=st.session_state.pdf_buffer,
+                file_name=f"{case_id}_Surgical_Stencil.pdf",
+                mime="application/pdf",
+                type="primary",
+                use_container_width=True
+            )
